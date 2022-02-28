@@ -61,11 +61,30 @@ public class LinesGrid : MonoBehaviour
         if (!isPaused && !isGameOver)
             Timer += Time.deltaTime;
 
+        //ghostball logic - temporarily make all active balls use the layermask that's not detected by the pathfinding graph
+        GameObject[] balls = GameObject.FindGameObjectsWithTag("Ball");
+        if (currentFocus != null)
+        {
+            if (currentFocus.type == BallType.Ghost)
+            {
+                for (int i = 0; i < balls.Length; i++)
+                    balls[i].GetComponent<Ball>().isGhosted = true;
+            } else
+            {
+                for (int i = 0; i < balls.Length; i++)
+                    balls[i].GetComponent<Ball>().isGhosted = false;
+            }    
+        } else
+        {
+            for (int i = 0; i < balls.Length; i++)
+                balls[i].GetComponent<Ball>().isGhosted = false;
+        }
+
         if (Input.GetMouseButtonDown(0) && !isFocusMoving && !isPaused && !isGameOver)
         {
             Vector3 MousePos = ConvertMousePositionToCell(Camera.main.ScreenToWorldPoint(Input.mousePosition));
 
-            if (MousePos.x >= 0 && MousePos.x < width && MousePos.y >= 0 && MousePos.x < width) // this check ensures the player is interacting within the board
+            if (MousePos.x >= 0 && MousePos.x < width && MousePos.y >= 0 && MousePos.y < width) // this check ensures the player is interacting within the board
             {
                 if (currentFocus == null)
                 {
@@ -121,12 +140,26 @@ public class LinesGrid : MonoBehaviour
 
         if (isFocusMoving)
         {
-            if (currentFocus.gameObject.transform.position == destination) // once ball arrives, set the new location as current focus, unfocus, then spawn new balls
+            if (currentFocus.gameObject.transform.position == destination) // once ball arrives, set the new location as current focus, handle on arrival events, unfocus, then spawn new balls
             {                
                 gridData[(int)destination.x, (int)destination.y] = currentFocus;
-                CheckForLinesWithQueueSpawn(currentFocus);
+
+                switch(currentFocus.type)
+                {
+                    case BallType.Bomb: // if bomb, find all adjacent cells and blow up whatever's in them
+                        TriggerBombBall((int)destination.x, (int)destination.y);
+                        break;                   
+                    case BallType.Wildcard: // if wildcard, only spawn new balls - placebo solution to prevent complications from 2 different colors in 2 opposite directions casting from a wildcard
+                        SpawnBallsInQueue();
+                        break;
+                    case BallType.Double: // otherwise, simply check for lines and spawn new balls if applicable
+                    case BallType.Ghost:
+                    default:
+                        CheckForLinesWithQueueSpawn(currentFocus);
+                        break;
+                }
+
                 currentFocus = null;
-                //SpawnBallsInQueue();
                 isFocusMoving = false;
             }
         }
@@ -157,6 +190,7 @@ public class LinesGrid : MonoBehaviour
 
     void GenerateNewBalls()
     {
+        // count number of empty grid cells to determine if the game can continue
         int nullCount = 0;
         for (int x = 0; x < width; x++)
         {
@@ -166,6 +200,7 @@ public class LinesGrid : MonoBehaviour
                     nullCount++;
             }
         }
+
         if (nullCount > 1)
         {
             for (int i = 0; i < (3 < nullCount ? 3 : nullCount); i++)
@@ -219,10 +254,18 @@ public class LinesGrid : MonoBehaviour
         GenerateNewBalls();
     }
 
-    bool HorizontalRaycast(Ball origin, List<Vector2> coordinates)
+    // these 4 raycasts are used to detect matching balls in lines
+    // 1. cast rays in opposite directions, horizontally, vertically and diagonally
+    // 2. look for results that are not a bomb, has valid data on grid (since queued balls are only shown, not saved into grid data, and definitely
+    // doesn't count for matches) and are either a wildcard or matches the ball calling the cast (a.k.a the ball moved by the player in the last turn)
+    // 3. if the origin ball is a double ball, increase extras by 1 ONCE
+    // 4. once done, filter the results again and look for entries that would form a line if placed together, adding 1 to extras if an entry is a double ball
+    // 5. return the number of detected matches plus extras; a line requires a sum of at least 4 (since we don't count the originating ball)
+    int HorizontalRaycast(Ball origin, List<Vector2> coordinates)
     {
-        RaycastHit2D[] leftRay = Physics2D.RaycastAll(origin.transform.position, Vector2.left, Mathf.Infinity, LayerMask.GetMask("Block"));
-        RaycastHit2D[] rightRay = Physics2D.RaycastAll(origin.transform.position, Vector2.right, Mathf.Infinity, LayerMask.GetMask("Block"));
+        RaycastHit2D[] leftRay = Physics2D.RaycastAll(origin.transform.position, Vector2.left, Mathf.Infinity);
+        RaycastHit2D[] rightRay = Physics2D.RaycastAll(origin.transform.position, Vector2.right, Mathf.Infinity);
+        int extras = 0;
 
         List<Vector2> leftHit = new List<Vector2>();
         for (int i = 0; i < leftRay.Length; i++)
@@ -231,10 +274,14 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
                     if ((int)b.transform.position.x == (int)origin.transform.position.x)
+                    {
+                        if (origin.type == BallType.Double)
+                            extras++;
                         continue;
+                    }
                     else
                         leftHit.Add(new Vector2(b.transform.position.x, b.transform.position.y));
                 }
@@ -245,7 +292,11 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < leftHit.Count; i++)
         {
             if ((int)leftHit[i].x == (int)origin.transform.position.x - i - 1)
+            {
                 coordinates.Add(new Vector2(leftHit[i].x, leftHit[i].y));
+                if (gridData[(int)leftHit[i].x, (int)leftHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
@@ -257,7 +308,7 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
                     if ((int)b.transform.position.x == (int)origin.transform.position.x)
                         continue;
@@ -271,21 +322,23 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < rightHit.Count; i++)
         {
             if ((int)rightHit[i].x == (int)origin.transform.position.x + i + 1)
+            {
                 coordinates.Add(new Vector2(rightHit[i].x, rightHit[i].y));
+                if (gridData[(int)rightHit[i].x, (int)rightHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
 
-        if (coordinates.Count >= 4)
-            return true;
-        else
-            return false;
+        return coordinates.Count + extras;
     }
 
-    bool VerticalRaycast(Ball origin, List<Vector2> coordinates)
+    int VerticalRaycast(Ball origin, List<Vector2> coordinates)
     {
-        RaycastHit2D[] upwardsRay = Physics2D.RaycastAll(origin.transform.position, Vector2.up, Mathf.Infinity, LayerMask.GetMask("Block"));
-        RaycastHit2D[] downwardsRay = Physics2D.RaycastAll(origin.transform.position, Vector2.down, Mathf.Infinity, LayerMask.GetMask("Block"));
+        RaycastHit2D[] upwardsRay = Physics2D.RaycastAll(origin.transform.position, Vector2.up, Mathf.Infinity);
+        RaycastHit2D[] downwardsRay = Physics2D.RaycastAll(origin.transform.position, Vector2.down, Mathf.Infinity);
+        int extras = 0;
 
         List<Vector2> upwardsHit = new List<Vector2>();
         for (int i = 0; i < upwardsRay.Length; i++)
@@ -294,10 +347,14 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
                     if ((int)b.transform.position.y == (int)origin.transform.position.y)
+                    {
+                        if (origin.type == BallType.Double)
+                            extras++;
                         continue;
+                    }
                     else
                         upwardsHit.Add(new Vector2(b.transform.position.x, b.transform.position.y));
                 }
@@ -308,7 +365,11 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < upwardsHit.Count; i++)
         {
             if ((int)upwardsHit[i].y == (int)origin.transform.position.y + i + 1)
+            {
                 coordinates.Add(new Vector2(upwardsHit[i].x, upwardsHit[i].y));
+                if (gridData[(int)upwardsHit[i].x, (int)upwardsHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
@@ -320,7 +381,7 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
                     if ((int)b.transform.position.y == (int)origin.transform.position.y)
                         continue;
@@ -334,21 +395,23 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < downwardsHit.Count; i++)
         {
             if ((int)downwardsHit[i].y == (int)origin.transform.position.y - i - 1)
+            {
                 coordinates.Add(new Vector2(downwardsHit[i].x, downwardsHit[i].y));
+                if (gridData[(int)downwardsHit[i].x, (int)downwardsHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
 
-        if (coordinates.Count >= 4)
-            return true;
-        else
-            return false;
+        return coordinates.Count + extras;
     }
 
-    bool LeftRightDiagonalRaycast(Ball origin, List<Vector2> coordinates)
+    int LeftRightDiagonalRaycast(Ball origin, List<Vector2> coordinates)
     {
-        RaycastHit2D[] NWRay = Physics2D.RaycastAll(origin.transform.position, new Vector2(-1f, 1f), Mathf.Infinity, LayerMask.GetMask("Block"));
-        RaycastHit2D[] SERay = Physics2D.RaycastAll(origin.transform.position, new Vector2(1f, -1f), Mathf.Infinity, LayerMask.GetMask("Block"));
+        RaycastHit2D[] NWRay = Physics2D.RaycastAll(origin.transform.position, new Vector2(-1f, 1f), Mathf.Infinity);
+        RaycastHit2D[] SERay = Physics2D.RaycastAll(origin.transform.position, new Vector2(1f, -1f), Mathf.Infinity);
+        int extras = 0;
 
         List<Vector2> NWHit = new List<Vector2>();
         for (int i = 0; i < NWRay.Length; i++)
@@ -357,10 +420,14 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
-                    if ((int)b.transform.position.x == (int) origin.transform.position.x && (int)b.transform.position.y == (int)origin.transform.position.y)
+                    if ((int)b.transform.position.x == (int)origin.transform.position.x && (int)b.transform.position.y == (int)origin.transform.position.y)
+                    {
+                        if (origin.type == BallType.Double)
+                            extras++;
                         continue;
+                    }
                     else
                         NWHit.Add(new Vector2(b.transform.position.x, b.transform.position.y));
                 }
@@ -371,7 +438,11 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < NWHit.Count; i++)
         {
             if (((int)NWHit[i].x == (int)origin.transform.position.x - i - 1) && ((int)NWHit[i].y == (int)origin.transform.position.y + i + 1))
+            {
                 coordinates.Add(new Vector2(NWHit[i].x, NWHit[i].y));
+                if (gridData[(int)NWHit[i].x, (int)NWHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
@@ -383,7 +454,7 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
                     if ((int)b.transform.position.x == (int)origin.transform.position.x && (int)b.transform.position.y == (int)origin.transform.position.y)
                         continue;
@@ -397,21 +468,23 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < SEHit.Count; i++)
         {
             if (((int)SEHit[i].x == (int)origin.transform.position.x + i + 1) && ((int)SEHit[i].y == (int)origin.transform.position.y - i - 1))
+            {
                 coordinates.Add(new Vector2(SEHit[i].x, SEHit[i].y));
+                if (gridData[(int)SEHit[i].x, (int)SEHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
 
-        if (coordinates.Count >= 4)
-            return true;
-        else
-            return false;
+        return coordinates.Count + extras;
     }
 
-    bool RightLeftDiagonalRaycast(Ball origin, List<Vector2> coordinates)
+    int RightLeftDiagonalRaycast(Ball origin, List<Vector2> coordinates)
     {
-        RaycastHit2D[] NERay = Physics2D.RaycastAll(origin.transform.position, new Vector2(1f, 1f), Mathf.Infinity, LayerMask.GetMask("Block"));
-        RaycastHit2D[] SWRay = Physics2D.RaycastAll(origin.transform.position, new Vector2(-1f, -1f), Mathf.Infinity, LayerMask.GetMask("Block"));
+        RaycastHit2D[] NERay = Physics2D.RaycastAll(origin.transform.position, new Vector2(1f, 1f), Mathf.Infinity);
+        RaycastHit2D[] SWRay = Physics2D.RaycastAll(origin.transform.position, new Vector2(-1f, -1f), Mathf.Infinity);
+        int extras = 0;
 
         List<Vector2> NEHit = new List<Vector2>();
         for (int i = 0; i < NERay.Length; i++)
@@ -420,10 +493,14 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
                     if ((int)b.transform.position.x == (int)origin.transform.position.x && (int)b.transform.position.y == (int)origin.transform.position.y)
+                    {
+                        if (origin.type == BallType.Double)
+                            extras++;
                         continue;
+                    }
                     else
                         NEHit.Add(new Vector2(b.transform.position.x, b.transform.position.y));
                 }
@@ -434,7 +511,11 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < NEHit.Count; i++)
         {
             if (((int)NEHit[i].x == (int)origin.transform.position.x + i + 1) && ((int)NEHit[i].y == (int)origin.transform.position.y + i + 1))
+            {
                 coordinates.Add(new Vector2(NEHit[i].x, NEHit[i].y));
+                if (gridData[(int)NEHit[i].x, (int)NEHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
@@ -446,7 +527,7 @@ public class LinesGrid : MonoBehaviour
             Ball b = hit.transform.GetComponent<Ball>();
             if (b != null)
             {
-                if (b.color == origin.color)
+                if ((b.color == origin.color || b.type == BallType.Wildcard) && b.type != BallType.Bomb && gridData[(int)b.transform.position.x, (int)b.transform.position.y] != null)
                 {
                     if ((int)b.transform.position.x == (int)origin.transform.position.x && (int)b.transform.position.y == (int)origin.transform.position.y)
                         continue;
@@ -460,45 +541,54 @@ public class LinesGrid : MonoBehaviour
         for (int i = 0; i < SWHit.Count; i++)
         {
             if (((int)SWHit[i].x == (int)origin.transform.position.x - i - 1) && ((int)SWHit[i].y == (int)origin.transform.position.y - i - 1))
+            {
                 coordinates.Add(new Vector2(SWHit[i].x, SWHit[i].y));
+                if (gridData[(int)SWHit[i].x, (int)SWHit[i].y].type == BallType.Double)
+                    extras++;
+            }
             else
                 break;
         }
 
-        if (coordinates.Count >= 4)
-            return true;
-        else
-            return false;
+        return coordinates.Count + extras;
     }
 
+    // used for checking potential new lines formed by newly spawned balls in queue - this doesn't call the function to generate and queue up
+    // new balls since the lines formed are not because of player action
     void CheckForLines(Ball position)
     {
         List<Vector2> matches = new List<Vector2>();
 
         List<Vector2> horizontalCast = new List<Vector2>();
-        if (HorizontalRaycast(position, horizontalCast))
+        if (HorizontalRaycast(position, horizontalCast) >= 4)
             matches.AddRange(horizontalCast);
 
         List<Vector2> verticalCast = new List<Vector2>();
-        if (VerticalRaycast(position, verticalCast))
+        if (VerticalRaycast(position, verticalCast) >= 4)
             matches.AddRange(verticalCast);
 
         List<Vector2> L2RCast = new List<Vector2>();
-        if (LeftRightDiagonalRaycast(position, L2RCast))
+        if (LeftRightDiagonalRaycast(position, L2RCast) >= 4)
             matches.AddRange(L2RCast);
 
         List<Vector2> R2LCast = new List<Vector2>();
-        if (RightLeftDiagonalRaycast(position, R2LCast))
+        if (RightLeftDiagonalRaycast(position, R2LCast) >= 4)
             matches.AddRange(R2LCast);
 
         if (matches.Count > 0)
         {
             foreach (Vector2 v in matches)
             {
+                if (gridData[(int)v.x, (int)v.y].type == BallType.Double)
+                    Score++;
+
                 Destroy(gridData[(int)v.x, (int)v.y].gameObject);
                 gridData[(int)v.x, (int)v.y] = null;
                 Score++;
             }
+            if (gridData[(int)position.transform.position.x, (int)position.transform.position.y].type == BallType.Double)
+                Score++;
+
             Destroy(gridData[(int)position.transform.position.x, (int)position.transform.position.y].gameObject);
             gridData[(int)position.transform.position.x, (int)position.transform.position.y] = null;
             Score++;
@@ -510,35 +600,91 @@ public class LinesGrid : MonoBehaviour
         List<Vector2> matches = new List<Vector2>();
 
         List<Vector2> horizontalCast = new List<Vector2>();
-        if (HorizontalRaycast(position, horizontalCast))
+        if (HorizontalRaycast(position, horizontalCast) >= 4)
             matches.AddRange(horizontalCast);
 
         List<Vector2> verticalCast = new List<Vector2>();
-        if (VerticalRaycast(position, verticalCast))
+        if (VerticalRaycast(position, verticalCast) >= 4)
             matches.AddRange(verticalCast);
 
         List<Vector2> L2RCast = new List<Vector2>();
-        if (LeftRightDiagonalRaycast(position, L2RCast))
+        if (LeftRightDiagonalRaycast(position, L2RCast) >= 4)
             matches.AddRange(L2RCast);
 
         List<Vector2> R2LCast = new List<Vector2>();
-        if (RightLeftDiagonalRaycast(position, R2LCast))
+        if (RightLeftDiagonalRaycast(position, R2LCast) >= 4)
             matches.AddRange(R2LCast);
 
         if (matches.Count > 0)
         {
             foreach (Vector2 v in matches)
             {
+                if (gridData[(int)v.x, (int)v.y].type == BallType.Double)
+                    Score++;
+
                 Destroy(gridData[(int)v.x, (int)v.y].gameObject);
                 gridData[(int)v.x, (int)v.y] = null;
                 Score++;
             }
+            if (gridData[(int)position.transform.position.x, (int)position.transform.position.y].type == BallType.Double)
+                Score++;
+
             Destroy(gridData[(int)position.transform.position.x, (int)position.transform.position.y].gameObject);
             gridData[(int)position.transform.position.x, (int)position.transform.position.y] = null;
             Score++;
         }
         else
-            SpawnBallsInQueue();
+            SpawnBallsInQueue(); // if there are no matches, spawn balls currently in queue, then queue up a new batch of balls
+    }
+
+    List<Vector2> GetAdjacentCells(Vector2 pos)
+    {
+        List<Vector2> list = new List<Vector2>();
+
+        list.Add(new Vector2(pos.x - 1, pos.y));
+        list.Add(new Vector2(pos.x + 1, pos.y));
+        list.Add(new Vector2(pos.x, pos.y - 1));
+        list.Add(new Vector2(pos.x, pos.y + 1));
+        list.Add(new Vector2(pos.x - 1, pos.y + 1));
+        list.Add(new Vector2(pos.x + 1, pos.y - 1));
+        list.Add(new Vector2(pos.x - 1, pos.y - 1));
+        list.Add(new Vector2(pos.x + 1, pos.y + 1));
+
+        return list;
+    }
+
+    void TriggerBombBall(int x, int y)
+    {
+        Vector2 pos = new Vector2(x, y);
+        List<Vector2> adjPos = GetAdjacentCells(pos);
+        List<Vector2> realAdjPos = new List<Vector2>();
+
+        // remove all coordinates that are not within the 9*9 grid
+        for (int i = 0; i < adjPos.Count; i++)
+        {
+            if (adjPos[i].x >= 0 && adjPos[i].x <= 8 && adjPos[i].y >= 0 && adjPos[i].y <= 8)
+                realAdjPos.Add(adjPos[i]);
+        }
+        realAdjPos.Add(pos); // this is to ensure that the bomb itself is blown up as well
+
+        for(int i = 0;i < realAdjPos.Count;i++)
+        {
+            if (gridData[(int)realAdjPos[i].x, (int)realAdjPos[i].y] != null)
+            {
+                Destroy(gridData[(int)realAdjPos[i].x, (int)realAdjPos[i].y].gameObject);
+                gridData[(int)realAdjPos[i].x, (int)realAdjPos[i].y] = null;
+                Score++;
+            }
+            for (int j = 0; j < queue.Count; j++)
+            {
+                if (queue[j].x == realAdjPos[i].x && queue[j].y == realAdjPos[i].y)
+                {
+                    Destroy(queue[j].ball.gameObject);
+                    queue.RemoveAt(j);
+                }
+            }
+        }
+        SpawnBallsInQueue();
     }
 
     public void TogglePause()
@@ -565,6 +711,7 @@ public class LinesGrid : MonoBehaviour
     }
 }
 
+// class to hold queue data - x and y are the coordinates of the upcoming ball, and "ball" holds its data
 public class BallQueue
 {
     public int x { get; private set; }

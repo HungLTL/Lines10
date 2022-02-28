@@ -372,8 +372,8 @@ MonoBehaviour:
   m_faceColor:
     serializedVersion: 2
     rgba: 4294967295
-  m_fontSize: 24
-  m_fontSizeBase: 24
+  m_fontSize: 28
+  m_fontSizeBase: 28
   m_fontWeight: 400
   m_enableAutoSizing: 0
   m_fontSizeMin: 18
@@ -1771,6 +1771,9 @@ MonoBehaviour:
   - {fileID: 6613822501886713203}
   - {fileID: 1187569395}
   - {fileID: 1098355175}
+  normalQueueSprite: {fileID: 21300000, guid: 42f0f6f3455bc544f9210cda1d0bcbbd, type: 3}
+  doubleQueueSprite: {fileID: 21300000, guid: 1aa8530455062f2459f975f823c3aa3e, type: 3}
+  wildcardQueueSprite: {fileID: 21300000, guid: 9ee8cefb52ce451498745a5efa6e6465, type: 3}
 --- !u!1001 &1747998670112397317
 PrefabInstance:
   m_ObjectHideFlags: 0
