@@ -5,30 +5,28 @@ using Pathfinding;
 
 public class LinesGrid : MonoBehaviour
 {
-    public static LinesGrid instance;
 
     [SerializeField]
     private GameObject gridCell;
     [SerializeField]
     private GameObject ball;
+ 
+    Vector3 destination;
+    public bool isFocusMoving { get; private set; }
+    public bool isPaused { get; private set; }
+    public bool isGameOver{get; private set;}
 
-    Ball currentFocus;
-    Ball[,] gridData;
-    List<BallQueue> queue;
-    public Vector3 destination;
-    public bool isFocusMoving;
+    public float Timer { get; private set; }
+    public int Score { get; private set; }
+
+    public List<BallQueue> queue { get; private set; }
+    public Ball currentFocus { get; private set; }
+    public Ball[,] gridData { get; private set; }
 
     public int width, height;
 
     private void Awake()
     {
-        if (instance != null)
-        {
-            Debug.LogWarning("More than one instance of grid found!");
-            return;
-        }
-        instance = this;
-
         gridData = new Ball[width, height];
         for (int x = 0; x < width; x++)
         {
@@ -38,11 +36,17 @@ public class LinesGrid : MonoBehaviour
                 gridData[x, y] = null;
             }
         }
-        isFocusMoving = false;
     }
 
     private void Start()
     {
+        isFocusMoving = false;
+        isPaused = false;
+        isGameOver = false;
+
+        Score = 0;
+        Timer = 0f;
+
         GenerateNewGrid();
         AstarPath.active.Scan();
 
@@ -54,10 +58,12 @@ public class LinesGrid : MonoBehaviour
     {
         AstarPath.active.Scan();
 
-        if (Input.GetMouseButtonDown(0) && !isFocusMoving)
+        if (!isPaused && !isGameOver)
+            Timer += Time.deltaTime;
+
+        if (Input.GetMouseButtonDown(0) && !isFocusMoving && !isPaused && !isGameOver)
         {
             Vector3 MousePos = ConvertMousePositionToCell(Camera.main.ScreenToWorldPoint(Input.mousePosition));
-            Debug.Log("Mouse position: " + MousePos);
 
             if (MousePos.x >= 0 && MousePos.x < width && MousePos.y >= 0 && MousePos.x < width) // this check ensures the player is interacting within the board
             {
@@ -86,8 +92,6 @@ public class LinesGrid : MonoBehaviour
                     {
                         GraphNode node1 = AstarPath.active.GetNearest(currentFocus.transform.position).node;
                         GraphNode node2 = AstarPath.active.GetNearest(MousePos, NNConstraint.Default).node;
-                        Vector3 n1 = (Vector3)node1.position, n2 = (Vector3)node2.position;
-                        Debug.Log(n1 + " - " + n2);
 
                         if (PathUtilities.IsPathPossible(node1, node2)) // if a path is possible, set destination for current focus and prepare handling
                         {
@@ -128,7 +132,7 @@ public class LinesGrid : MonoBehaviour
         }
     }
 
-    Vector3 ConvertMousePositionToCell(Vector3 mousePos)
+    public static Vector3 ConvertMousePositionToCell(Vector3 mousePos)
     {
         return new Vector3(Mathf.RoundToInt(mousePos.x), Mathf.RoundToInt(mousePos.y), 0);
     }
@@ -180,7 +184,7 @@ public class LinesGrid : MonoBehaviour
 
     void GameOver()
     {
-        Debug.Log("Game over!");
+        isGameOver = true;
     }
 
     bool CheckIfPositionIsOccupiedInQueue(int x, int y)
@@ -272,9 +276,6 @@ public class LinesGrid : MonoBehaviour
                 break;
         }
 
-        foreach (Vector2 c in coordinates)
-            Debug.Log(c + " ");
-
         if (coordinates.Count >= 4)
             return true;
         else
@@ -337,9 +338,6 @@ public class LinesGrid : MonoBehaviour
             else
                 break;
         }
-
-        foreach (Vector2 c in coordinates)
-            Debug.Log(c + " ");
 
         if (coordinates.Count >= 4)
             return true;
@@ -404,9 +402,6 @@ public class LinesGrid : MonoBehaviour
                 break;
         }
 
-        foreach (Vector2 c in coordinates)
-            Debug.Log(c + " ");
-
         if (coordinates.Count >= 4)
             return true;
         else
@@ -470,9 +465,6 @@ public class LinesGrid : MonoBehaviour
                 break;
         }
 
-        foreach (Vector2 c in coordinates)
-            Debug.Log(c + " ");
-
         if (coordinates.Count >= 4)
             return true;
         else
@@ -505,9 +497,11 @@ public class LinesGrid : MonoBehaviour
             {
                 Destroy(gridData[(int)v.x, (int)v.y].gameObject);
                 gridData[(int)v.x, (int)v.y] = null;
+                Score++;
             }
             Destroy(gridData[(int)position.transform.position.x, (int)position.transform.position.y].gameObject);
             gridData[(int)position.transform.position.x, (int)position.transform.position.y] = null;
+            Score++;
         }
     }
 
@@ -537,12 +531,37 @@ public class LinesGrid : MonoBehaviour
             {
                 Destroy(gridData[(int)v.x, (int)v.y].gameObject);
                 gridData[(int)v.x, (int)v.y] = null;
+                Score++;
             }
             Destroy(gridData[(int)position.transform.position.x, (int)position.transform.position.y].gameObject);
             gridData[(int)position.transform.position.x, (int)position.transform.position.y] = null;
+            Score++;
         }
         else
             SpawnBallsInQueue();
+    }
+
+    public void TogglePause()
+    {
+        isPaused = !isPaused;
+    }
+
+    public void Restart()
+    {
+        GameObject[] cells = GameObject.FindGameObjectsWithTag("Cell");
+        for (int i = 0; i < cells.Length; i++)
+        {
+            Destroy(cells[i]);
+        }
+
+        GameObject[] balls = GameObject.FindGameObjectsWithTag("Ball");
+        for (int i = 0; i < balls.Length; i++)
+        {
+            Destroy(balls[i]);
+        }
+
+        Awake();
+        Start();
     }
 }
 

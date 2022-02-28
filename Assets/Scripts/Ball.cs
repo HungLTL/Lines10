@@ -29,34 +29,7 @@ public class Ball : MonoBehaviour
         sr = GetComponent<SpriteRenderer>();
         aiLerp = GetComponent<AILerp>();
         color = (BallColor)Random.Range(0, 7);
-        switch (color)
-        {
-            case BallColor.Red:
-                sr.color = Color.red;
-                break;
-            case BallColor.Green:
-                sr.color = Color.green;
-                break;
-            case BallColor.Blue:
-                sr.color = Color.blue;
-                break;
-            case BallColor.Yellow:
-                sr.color = Color.yellow;
-                break;
-            case BallColor.Pink:
-                sr.color = new Color32(255, 105, 180, 255);
-                break;
-            case BallColor.Cyan:
-                sr.color = Color.cyan;
-                break;
-            case BallColor.Brown:
-                sr.color = new Color32(139, 69, 19, 255);
-                break;
-            default: //this should never happen
-                sr.color = Color.white;
-                break;
-
-        }
+        sr.color = convertToColor(color);
         isFocus = false;
     }
 
@@ -91,9 +64,32 @@ public class Ball : MonoBehaviour
     {
         aiLerp.destination = pos;
     }
-    
+
     public void Activate()
     {
         anim.SetTrigger("activate");
+    }
+
+    public static Color convertToColor(BallColor color)
+    {
+        switch (color)
+        {
+            case BallColor.Red:
+                return Color.red;
+            case BallColor.Green:
+                return Color.green;
+            case BallColor.Blue:
+                return Color.blue;
+            case BallColor.Yellow:
+                return Color.yellow;
+            case BallColor.Pink:
+                return new Color32(255, 105, 180, 255);
+            case BallColor.Cyan:
+                return Color.cyan;
+            case BallColor.Brown:
+                return new Color32(139, 69, 19, 255);
+            default: //this should never happen
+                return Color.white;
+        }
     }
 }
