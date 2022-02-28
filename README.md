@@ -14,3 +14,10 @@ Special balls:
 - Bomb: Pitch black. Move to a new position to detonate, blowing up all balls (both queued and active) in a 3x3 area, and forcing new balls to spawn.
 - Double ball: Identifiable by a checkerboard pattern. A double ball counts as 2 balls for any line that matches its color.
 - Wildcard: Hard to ignore with its rainbow coat. Can be used in place of any color in a line; however, it cannot be used to complete a line by itself.
+
+Development tools:
+- Unity2D (Game development engine)
+- C# (Language)
+- Paint, Paint.NET (Sprites)
+- TextMeshPro (UI)
+- Aron Granberg's A\* Pathfinding Project (https://arongranberg.com/astar/) (Ball pathfinding)
